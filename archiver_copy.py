@@ -2,11 +2,11 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
-"""Move FEBUS outputs to data, then copy them to archive and FTP."""
+"""Move FEBUS outputs off home: bsl to data, archive and FTP; mtx to archive."""
 
 import argparse
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from archiver_common import (
@@ -22,6 +22,9 @@ from archiver_common import (
     print_table,
     require_destination_roots,
 )
+
+
+MINIMUM_FILE_AGE = timedelta(hours=2)
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,24 +48,25 @@ def moved_item(item: MeasurementFile, destination: Path) -> MeasurementFile:
     return MeasurementFile.from_path(destination) if destination.exists() else item
 
 
-def move_to_data(
+def move_items(
     items: list[MeasurementFile],
+    root: Path,
     dry_run: bool,
     failures: list[str],
 ) -> tuple[list[MeasurementFile], set[str]]:
-    """Move home files into the local data tree."""
+    """Move home files into one destination tree."""
     data_items: list[MeasurementFile] = []
     moved_files: set[str] = set()
 
     for item in items:
-        destination = item.destination_path(DATA_PATH)
+        destination = item.destination_path(root)
         if files_match(item.source_path, destination):
             data_items.append(moved_item(item, destination))
             continue
 
         if destination.exists():
             failures.append(
-                f"move blocked by different existing data file: {item.source_path} -> {destination}"
+                f"move blocked by different existing file: {item.source_path} -> {destination}"
             )
             continue
 
@@ -84,31 +88,46 @@ def move_to_data(
 
 def run_copy(home_dir: Path, dry_run: bool) -> CopySummary:
     """Run the FEBUS move and copy workflow."""
-    items = discover_files(home_dir)
-    summary = CopySummary(discovered=len(items))
+    summary = CopySummary()
+    items = discover_files(home_dir, summary.failures)
+    summary.discovered = len(items)
+    cutoff = datetime.now() - MINIMUM_FILE_AGE
+    items = [item for item in items if item.modified_time <= cutoff]
 
     if not dry_run:
         require_destination_roots([DATA_PATH, FTP_PATH])
 
-    data_items, moved_files = move_to_data(items, dry_run, summary.failures)
+    # Home only has room for the lightweight bsl files; heavy mtx goes to the
+    # archive drive and is never kept locally.
+    bsl_items = [item for item in items if item.kind == "bsl"]
+    mtx_items = [item for item in items if item.kind != "bsl"]
 
-    # FTP carries only the lightweight BSL files; archive keeps everything.
-    bsl_items = [item for item in data_items if item.kind == "bsl"]
+    data_items, moved_files = move_items(bsl_items, DATA_PATH, dry_run, summary.failures)
     affected_files: set[str] = set(moved_files)
-    archive_affected: set[str] = set()
+
     if dry_run or ARCHIVE_PATH.exists():
         summary.archive_counts, archive_affected = copy_files(
             data_items, ARCHIVE_PATH, dry_run, summary.failures
         )
+        _, archived_mtx = move_items(
+            mtx_items, ARCHIVE_PATH, dry_run, summary.failures
+        )
+        summary.archive_counts["moved" if not dry_run else "would_move"] = len(
+            archived_mtx
+        )
+        affected_files.update(archive_affected)
+        affected_files.update(archived_mtx)
     else:
+        # Leave mtx in home rather than move it somewhere unmounted.
         summary.failures.append(
             f"archive skipped: destination root does not exist: {ARCHIVE_PATH}"
         )
+
+    # FTP carries only the lightweight BSL files.
     summary.ftp_counts, ftp_affected = copy_files(
-        bsl_items, FTP_PATH, dry_run, summary.failures
+        data_items, FTP_PATH, dry_run, summary.failures
     )
     summary.data_counts["moved" if not dry_run else "would_move"] = len(moved_files)
-    affected_files.update(archive_affected)
     affected_files.update(ftp_affected)
     summary.affected_files = len(affected_files)
     return summary
