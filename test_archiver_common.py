@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from archiver_common import MeasurementFile, file_channel
+from archiver_common import MeasurementFile, discover_files, file_channel
 
 
 def measurement_path(tmp_path: Path, filename: str) -> Path:
@@ -45,3 +45,20 @@ def test_file_channel_rejects_missing_channel_before_timestamp(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="Unsupported file channel"):
         MeasurementFile.from_path(path)
+
+
+def test_discover_files_skips_malformed_measurement_and_records_failure(
+    tmp_path: Path,
+) -> None:
+    valid = measurement_path(
+        tmp_path, "cement-base_C1_2026-06-15T10.40.58+0200.bsl.h5"
+    )
+    measurement_path(tmp_path, "cement-base_2026-06-15T10.40.58+0200.bsl.h5")
+    failures: list[str] = []
+
+    items = discover_files(tmp_path, failures)
+
+    assert [item.source_path for item in items] == [valid]
+    assert len(failures) == 1
+    assert "discovery skipped" in failures[0]
+    assert "Unsupported file channel" in failures[0]

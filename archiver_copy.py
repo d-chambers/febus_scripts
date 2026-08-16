@@ -10,11 +10,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from archiver_common import (
+    ARCHIVE_MARKER_NAME,
     ARCHIVE_PATH,
     DATA_PATH,
     FTP_PATH,
     CopySummary,
     MeasurementFile,
+    archive_is_mounted,
     copy_files,
     discover_files,
     files_match,
@@ -107,7 +109,7 @@ def run_copy(home_dir: Path, dry_run: bool) -> CopySummary:
     )
     affected_files: set[str] = set(moved_files)
 
-    if dry_run or ARCHIVE_PATH.exists():
+    if dry_run or archive_is_mounted(ARCHIVE_PATH):
         summary.archive_counts, archive_affected = copy_files(
             data_items, ARCHIVE_PATH, dry_run, summary.failures
         )
@@ -120,7 +122,8 @@ def run_copy(home_dir: Path, dry_run: bool) -> CopySummary:
     else:
         # Leave mtx in home rather than move it somewhere unmounted.
         summary.failures.append(
-            f"archive skipped: destination root does not exist: {ARCHIVE_PATH}"
+            f"archive skipped: volume not mounted, no {ARCHIVE_MARKER_NAME} "
+            f"in {ARCHIVE_PATH}"
         )
 
     # FTP carries only the lightweight BSL files.

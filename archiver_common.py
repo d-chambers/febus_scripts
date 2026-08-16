@@ -12,6 +12,12 @@ FTP_PATH = Path("/home/febus/ecenaris/OpticalFiber")
 ARCHIVE_PATH = Path("/mnt/febus-archive")
 DATA_PATH = Path("/home/febus/data")
 
+# The archive is a nofail systemd automount, so its mountpoint directory still
+# exists when the drive is absent. This marker lives on the volume itself, so
+# its absence means the volume is not there and mtx must not be moved onto the
+# small root filesystem underneath.
+ARCHIVE_MARKER_NAME = ".febus-archive"
+
 # Limit on total managed FEBUS files in the FTP folder, in bytes.
 FTP_LIMIT_SIZE_BYTES = 15_000_000_000
 
@@ -119,7 +125,7 @@ def file_channel(path: Path) -> str:
     raise ValueError(f"Unsupported file channel: {path.name}")
 
 
-def discover_files(home_dir: Path) -> list[MeasurementFile]:
+def discover_files(home_dir: Path, failures: list[str] | None = None) -> list[MeasurementFile]:
     """Collect supported top-level home-directory measurement files."""
     # Only top-level measurement outputs are archived; subfolders are managed separately.
     files = sorted(
@@ -130,7 +136,14 @@ def discover_files(home_dir: Path) -> list[MeasurementFile]:
         ],
         key=lambda path: path.name,
     )
-    return [MeasurementFile.from_path(path) for path in files]
+    discovered: list[MeasurementFile] = []
+    for path in files:
+        try:
+            discovered.append(MeasurementFile.from_path(path))
+        except ValueError as exc:
+            if failures is not None:
+                failures.append(f"discovery skipped: {path}: {exc}")
+    return discovered
 
 
 def files_match(source: Path, destination: Path) -> bool:
@@ -182,6 +195,11 @@ def copy_files(
                 f"copy failed: {item.source_path} -> {destination_root}: {exc}"
             )
     return counts, affected_files
+
+
+def archive_is_mounted(root: Path) -> bool:
+    """Return whether the archive volume itself is mounted, not just its directory."""
+    return (root / ARCHIVE_MARKER_NAME).is_file()
 
 
 def require_destination_roots(paths: list[Path]) -> None:
