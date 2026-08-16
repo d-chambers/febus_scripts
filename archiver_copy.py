@@ -102,16 +102,16 @@ def run_copy(home_dir: Path, dry_run: bool) -> CopySummary:
     bsl_items = [item for item in items if item.kind == "bsl"]
     mtx_items = [item for item in items if item.kind != "bsl"]
 
-    data_items, moved_files = move_items(bsl_items, DATA_PATH, dry_run, summary.failures)
+    data_items, moved_files = move_items(
+        bsl_items, DATA_PATH, dry_run, summary.failures
+    )
     affected_files: set[str] = set(moved_files)
 
     if dry_run or ARCHIVE_PATH.exists():
         summary.archive_counts, archive_affected = copy_files(
             data_items, ARCHIVE_PATH, dry_run, summary.failures
         )
-        _, archived_mtx = move_items(
-            mtx_items, ARCHIVE_PATH, dry_run, summary.failures
-        )
+        _, archived_mtx = move_items(mtx_items, ARCHIVE_PATH, dry_run, summary.failures)
         summary.archive_counts["moved" if not dry_run else "would_move"] = len(
             archived_mtx
         )
